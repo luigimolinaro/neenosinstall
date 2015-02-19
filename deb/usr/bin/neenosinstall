@@ -1,0 +1,1236 @@
+#!/bin/bash
+#
+# neenOsInstaller -- Installa il sistema operativo sencondo le specifiche
+# fornite nella wiki : http://wiki.neen.it/index.php/Installazione_server_linux
+# Copyright (c), Luigi Molinaro (luigi.molinaro AT neen DOT it)
+
+#VARIABILI INIT
+nOS_INIT=0
+nOS_APACHE=0
+nOS_ZEND=0
+nOS_VIRTUALMIN=0
+nOS_NGINX=0
+NEENWEBSERVER='init'
+####################
+#COLORI 
+####################
+# Setto l'output di messaggi [ OK ] ; [Warning] ; [Failed] ;
+nOS_red='\e[0;31m'
+nOS_green='\e[0;32m'
+nOS_yellow='\e[1;33m'
+nOS_cyan='\e[0;36m'
+nOS_orange='\e[0;33m'
+# Setup [ OK ] {}
+nOS_ok="[ ${nOS_green}OK $NC]"
+nOS_warning="[ ${nOS_yellow}Already-Installed $NC]"
+nOS_ko="[ ${nOS_red}Failed $NC]"
+NC=$(tput sgr0)
+bold=`tput bold`
+#########
+ID_CMD=id
+NEEN_VERSION=$(dpkg -l | grep neenosinstall | awk '{printf $3}')
+#########
+PWD_ZEND="NONE"
+PWD_MUNIN="NONE"
+PWD_PHPMYADM="NONE"
+PWD_MYSQL="NONE"
+#########
+nOS_IP=$(/sbin/ifconfig eth0 | grep 'inet addr:' | cut -d: -f2 | awk '{ print $1}')
+neenOsLock="/root/.neenosinstall"
+##################################################################################
+#FUNZIONI
+neenlogo(){
+echo -e "$nOS_orange"
+echo -e "   ____  ___  ___  ____ "
+echo -e "  |  _ \/ _ \/ _ \/ _  |"
+echo -e "  | | |   __/  __  | | |"
+echo -e "  |_| |_\___|\___|_| |_|"
+echo -e "${bold} High-Perfomance Hosting  "
+echo ""
+tput sgr0
+}
+
+help() {
+	neenlogo
+	echo ""
+	echo -e "${bold} -i     --init${NC}                     Installa il sistema da zero, da usare la prima volta"
+	echo -e "${bold}-sp     --showpassword${NC}             Visualizza File Password"
+	echo -e "${bold}-ph     --perfomancehelper${NC}         Aiuto tuning Apache + Mysql"
+	echo -e "${bold} -h     --help${NC}                     Mostra la schermata di help"
+	echo -e "${bold} -v     --version${NC}                  Mostra versione software"
+	echo -e "${nOS_red}"
+	echo "apache :"
+	tput sgr0
+	echo "----------------------------------------------------------------------------------------"
+	echo -e "${bold} -a     --apache${NC}                   Installa apache + mysql + munin + pannello neen"
+	echo -e "${bold} -za    --zenda${NC}                    Installa zend server + Mysql + munin + pannello neen"
+	echo -e "${bold} -vm    --virtualmin${NC}               Installa virtualmin + pannello neen"
+	echo -e "${nOS_red}"
+	echo "nginx  :"
+	tput sgr0
+	echo "----------------------------------------------------------------------------------------"
+	echo -e "${bold} -n     --nginx${NC}                    Installa nginx + mysql + munin + pannello neen"
+	echo -e "${bold} -zn    --zendn${NC}                    Installa zend server NGINX + Mysql + munin + pannello neen"
+	tput sgr0
+	echo "----------------------------------------------------------------------------------------"
+	echo "Example usage : neenosinstall --apache"
+	echo "                neenosinstall --nginx"
+	echo "                neenosinstall --virtualmin"
+	echo -e "${nOS_red}"
+        echo "WebServer creation  :"
+        tput sgr0
+	echo -e "${bold} -w     --webserver${NC}               Script creazione Host nginx/apache"
+	tput sgr0
+	echo ""
+	return
+}
+
+display() {
+
+nSLOGFILE=/root/.neenosinstall
+##########################
+# COLORI per DISPLAY
+#########################
+
+NORMAL="\e[0;39m"       # Foreground colour to default
+RED='\e[0;31m'          # Bright red
+GREEN='\e[0;32m'        # Green
+YELLOW='\e[1;33m'       # Purple
+BLACK='\e[0;30m'        # Black
+ORANGE='\e[0;33m'
+CYAN='\e[0;36m'
+NC=$(tput sgr0)
+	
+#
+	# This function is used to display text messages on to the
+	# users screen, as well as in to the log file. The same
+	# message is written to both. However, the screen may have
+	# a coloured result (green for good, red for bad, etc), and
+	# the log file will have the time prefixed to the message.
+	#
+	# Syntax: display --to <destination>
+	#		  [--screen-indent <n>] [--log-indent <n>]
+	#		  [--nl [<n>]] [--nl-after] [--log-nl] [--screen-nl]
+	#		  [--result <result> --color <colour>]
+	#		  <message>
+	#
+	# where the destination can be one of SCREEN, LOG or SCREEN+LOG.
+	#
+	# The --screen-indent and --log-indent options are used to
+	# forcibly indent a message.
+	# The --nl option causes a blank-line to be output before the
+	# message both on the screen and in the log file. A following
+	# number can be used to indicate how many blank lines should
+	# be displayed on the screen.
+	# The --log-nl option outputs a blank line only in the log file.
+	# The --screen-nl option outputs a blank line on the screen
+	# regardless of whether SCREEN was specified or not.
+	# The --nl-after option outputs a blank line on the screen after
+	# the message.
+	#
+
+	#
+	# We first initialize some variables and then
+	# process the switches used.
+	#
+
+	WARN_MSG=0; NL=0; NLAFTER=0; LOGINDENT=0; SCREENINDENT=0
+	LOGNL=0; SCREENNL=0
+	WRITETO=''; RESULT=''; COLOR=''; MSG=''
+	LINE1=''; LOGLINE1=''; SPACES=''
+
+	DISPLAY_LINE="display $*"
+
+	if [ $# -le 0 ]; then
+		echo "Error: Invalid display call - no arguments given"
+		return
+	fi
+
+	while [ $# -ge 1 ]; do
+		case "$1" in
+		--to)
+			case "$2" in
+			SCREEN|LOG|SCREEN+LOG)
+				WRITETO=$2
+				;;
+			*)
+				echo "Error: Invalid display destination: $2   Display line: ${DISPLAY_LINE}"
+				return
+				;;
+			esac
+
+			shift
+			;;
+		--result)
+			RESULT=$2
+
+			shift
+			;;
+		--color)
+			test -n "$2" && COLOR=`eval "echo \\${$2}"`
+
+			if [ -z "${COLOR}" ]; then
+				echo "Error: Invalid display color: $2   Display line: ${DISPLAY_LINE}"
+				return
+			fi
+
+			shift
+			;;
+		--log-indent)
+			LOGINDENT=$2
+
+			if [ -z "${LOGINDENT}" ]; then
+				echo "Error: No --log-indent value given.   Display line: ${DISPLAY_LINE}"
+				return
+			elif [ -z "`echo ${LOGINDENT} | grep '^[0-9]*$'`" ]; then
+				echo "Error: Invalid '--log-indent' value given: $2   Display line: ${DISPLAY_LINE}"
+				return
+			fi
+
+			shift
+			;;
+		--screen-indent)
+			SCREENINDENT=$2
+
+			if [ -z "${SCREENINDENT}" ]; then
+				echo "Error: No --screen-indent value given.   Display line: ${DISPLAY_LINE}"
+				return
+			elif [ -z "`echo ${SCREENINDENT} | grep '^[0-9]*$'`" ]; then
+				echo "Error: Invalid '--screen-indent' value given: $2   Display line: ${DISPLAY_LINE}"
+				return
+			fi
+
+			shift
+			;;
+		--nl)
+			NL=1
+
+			case "$2" in
+			[0-9])
+				NL=$2
+				shift
+				;;
+			esac
+			;;
+		--log-nl)
+			LOGNL=1
+			;;
+		--screen-nl)
+			SCREENNL=1
+			;;
+		--nl-after)
+			NLAFTER=1
+			;;
+		*)
+			MSG=$1
+			shift
+			break
+			;;
+		esac
+
+		shift
+	done
+
+	test "${WRITETO}" = "SCREEN" -o "${WRITETO}" = "SCREEN+LOG" && WRITETOTTY=1 || WRITETOTTY=0
+
+	test "${WRITETO}" = "LOG" -o "${WRITETO}" = "SCREEN+LOG" && WRITETOLOG=1 || WRITETOLOG=0
+
+
+	#
+	# Now check that the options we have been given make sense.
+	#
+
+	if [ $WRITETOTTY -eq 0 -a $WRITETOLOG -eq 0 ]; then
+		echo "Error: Invalid display destination: Display line: ${DISPLAY_LINE}"
+		return
+	elif [ $WRITETOTTY -eq 1 -a -n "${RESULT}" -a -z "${COLOR}" ]; then
+		echo "Error: Invalid display - no color given: Display line: ${DISPLAY_LINE}"
+		return
+	fi
+	
+    LINE1="${MSG}"
+
+	#
+	# At this point LINE1 is the text of the message. We have to
+	# see if the message is to be indented, and must prefix the
+	# time to log file messages. We must do the log file first
+	# because it uses LINE1.
+	#
+
+	if [ $WRITETOLOG -eq 1 ]; then
+		#LOGLINE1=`date '+[%H:%M:%S]'`
+
+		test $NL -gt 0 -o $LOGNL -eq 1 && echo "${LOGLINE1}" >>${nSLOGFILE}
+
+		test $LOGINDENT -gt 0 && SPACES=`echo "${BLANK_LINE}" | cut -c1-$LOGINDENT`
+		LOGLINE1="${LOGLINE1} ${SPACES}${LINE1}"
+	fi
+
+	if [ $WRITETOTTY -eq 1 -a $SCREENINDENT -gt 0 ]; then
+		SPACES=`echo "${BLANK_LINE}" | cut -c1-$SCREENINDENT`
+		LINE1="${SPACES}${LINE1}"
+	fi
+
+
+	#
+	# We now check to see if a result is to be output. If it is,
+	# then we need to space-out the line and color the result.
+	#
+
+	if [ -n "${RESULT}" ]; then
+		if [ $WRITETOTTY -eq 1 ]; then
+			LINE1_NUM=`echo "${LINE1}" | wc -c | tr -d ' '`
+			NUM_SPACES=`expr 62 - ${LINE1_NUM}`
+			test $NUM_SPACES -lt 1 && NUM_SPACES=1
+
+			LINE1="${LINE1}\033[${NUM_SPACES}C[ ${COLOR}${RESULT}${NORMAL} ]"
+		fi
+
+		if [ $WRITETOLOG -eq 1 ]; then
+			LOGLINE1_NUM=`echo "${LOGLINE1}" | wc -c | tr -d ' '`
+			NUM_SPACES=`expr 62 - ${LOGLINE1_NUM}`
+			test $NUM_SPACES -lt 1 && NUM_SPACES=1
+			SPACES=`echo "${BLANK_LINE}" | cut -c1-$NUM_SPACES`
+
+			LOGLINE1="${LOGLINE1}${SPACES}[ ${RESULT} ]"
+		fi
+	elif [ $WRITETOTTY -eq 1 -a -n "${COLOR}" ]; then
+		LINE1="${COLOR}${LINE1}${NORMAL}"
+	fi
+
+
+	#
+	# We can now output the message. We start with any required blank
+	# lines, and then the first line. If this is a warning message we
+	# write to the log file any additional lines.
+	#
+
+	if [ $SCREENNL -eq 1 ]; then
+		echo ""
+	fi
+
+	if [ $WRITETOTTY -eq 1 ]; then
+		NLLOOP=$NL
+		while test $NLLOOP -gt 0; do
+			echo ""
+			NLLOOP=`expr ${NLLOOP} - 1`
+		done
+
+		echo -e "${LINE1}"
+	fi
+
+	if [ $WRITETOLOG -eq 1 ]; then
+		echo "${LOGLINE1}" >>${nSLOGFILE}
+	fi
+
+	#
+	# Output a final blank line if requested to do so.
+	#
+
+	test $WRITETOTTY -eq 1 -a $NLAFTER -eq 1 && echo ""
+
+	return
+}
+
+
+showpassword() {
+	neenlogo
+	if [ ! -f $neenOsLock ] ; then
+		echo ""
+		echo "File Password not found. Maybe run --init ?"
+	else
+		echo ""
+		cat $neenOsLock	
+		echo ""
+	fi
+	exit 0
+}
+
+
+os-check() {
+        #Funzione controllo sistema operativo
+        if [[ `lsb_release -rs` == "10.04" ]] ; then
+                OSVERSION="lucid"
+        elif [[ `lsb_release -rs` == "12.04" ]] ; then
+                OSVERSION="precise"
+        elif [[ `lsb_release -rs` == "14.04" ]] ; then
+                OSVERSION="trusty"
+        else
+                echo "error : OS not supported"
+                exit 0
+        fi
+}
+
+spinner()
+{
+    local pid=$!
+    local delay=0.75
+    local spinstr='|/-\'
+    while [ "$(ps a | awk '{print $1}' | grep $pid)" ]; do
+        local temp=${spinstr#?}
+        printf " [%c]  " "$spinstr"
+        local spinstr=$temp${spinstr%"$temp"}
+        sleep $delay
+        printf "\b\b\b\b\b\b"
+    done
+    printf "    \b\b\b\b"
+}
+
+initunmanaged() {
+#Pacchetti da Installare 
+nOS_pacchetti=(
+	'rpl'
+	'ipcalc' 
+	'nmap'
+	'build-essential'
+	'traceroute'
+	'htop'
+	'ntp'
+	'mc'
+	'apticron'
+	'vim'
+	'bmon'
+	'postfix'
+        'mailutils'
+	'sysstat'
+	'iptraf'
+	'tcpdump'
+	'subversion'
+	'dh-make'
+	'telnet'   
+	'makepasswd'
+	'nagios-nrpe-server'
+	'munin-node'
+	'fail2ban' 	
+	'apt-dater-host'
+	'unattended-upgrades'
+	'byobu'
+	'nscd'
+	'python-software-properties'
+	'libcache-cache-perl'
+	'apache2-utils'
+	'git'
+	'autoconf'
+	'etckeeper'
+)
+
+display --to SCREEN --result OK --color GREEN --screen-indent 4 "Updating Operating System" $NC
+apt-get update 
+apt-get dist-upgrade --yes --force-yes
+display --to SCREEN --result OK --color GREEN --screen-indent 4 "Done" $NC
+ 
+## Scaricamento pacchetti
+    echo -e "${nOS_red}Launching Manual Init ... \n $NC"
+    #Aggiorno per sicurezza il sistema
+    display --to SCREEN --result OK --color GREEN --screen-indent 4 "Updating Operating System" $NC
+    apt-get update > /dev/null 2>&1 & spinner
+    apt-get dist-upgrade --yes --force-yes 
+    
+    # Calcolo il numero di pacchetti da installare ##################################
+    pacchetto=0
+            while [ "x${nOS_pacchetti[pacchetto]}" != "x" ]; do
+                        pacchetto=$(( $pacchetto + 1 ))
+            done
+ 
+	    # Installo pacchetti dall'array
+            for pacchetto in ${!nOS_pacchetti[@]}
+                    do 
+		    	#Check se il pacchetto è gia installato
+			CHECK_INSTALL=$(dpkg-query --show -f='${Status}\n' ${nOS_pacchetti[pacchetto]}  |  awk '{printf $1 awk}')
+			if [ "$CHECK_INSTALL" = "install" ]; then
+				display --to SCREEN --result SKIPPING --color YELLOW --screen-indent 4 "${nOS_pacchetti[pacchetto]}" $NC
+					else
+				DEBIAN_FRONTEND=noninteractive apt-get install -qqy ${nOS_pacchetti[pacchetto]} > /dev/null 2>&1 & spinner
+            	        	display --to SCREEN --result INSTALLING --color GREEN --screen-indent 4 "${nOS_pacchetti[pacchetto]}" $NC			
+			fi
+    	    done
+	    echo ""
+}
+
+initmanaged() {
+                
+	#Aggiorno per sicurezza il sistema
+	display --to SCREEN --result OK --color GREEN --screen-indent 4 "Updating Operating System" $NC
+		apt-get update
+                apt-get dist-upgrade --yes --force-yes
+
+	if [ $OSVERSION == "lucid" ] ; then
+		#Puppet Connect
+		display --to SCREEN --result OK --color GREEN --screen-indent 4 "Configuring Puppet Repo" $NC
+			wget https://apt.puppetlabs.com/puppetlabs-release-$OSVERSION.deb -O /tmp/puppetlabs-release-$OSVERSION.deb > /dev/null 2>&1 & spinner 
+			dpkg -i /tmp/puppetlabs-release-$OSVERSION.deb > /dev/null 2>&1
+			apt-get update > /dev/null 2>&1
+		display --to SCREEN --result OK --color GREEN --screen-indent 4 "Installing Puppet" $NC
+			apt-get install -qyy -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" puppet > /dev/null 2>&1 & spinner
+			wget -q http://tools-sys.neen.it/neenOsInstaller/10.04/puppet.txt -O /etc/puppet/puppet.conf
+			wget -q http://tools-sys.neen.it/neenOsInstaller/10.04/puppet1.txt -O /etc/default/puppet
+	else
+		#Puppet Connect
+                display --to SCREEN --result OK --color GREEN --screen-indent 4 "Installing Puppet" $NC
+                        apt-get install -qyy -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" puppet > /dev/null 2>&1 & spinner
+                        wget -q http://tools-sys.neen.it/neenOsInstaller/10.04/puppet.txt -O /etc/puppet/puppet.conf
+                        wget -q http://tools-sys.neen.it/neenOsInstaller/10.04/puppet1.txt -O /etc/default/puppet
+
+	fi
+
+	# Configuring First Time Puppet Node
+	display --to SCREEN --result OK --color GREEN --screen-indent 4 "Configuring Puppet Client" $NC
+		service puppet stop
+		puppet agent --enable
+		puppet agent -t
+		service puppet start
+	
+	# Configuring GIT Preferences
+	#Controllo se è installato git :
+	test -x /usr/bin/git || sudo apt-get install -qyy git 
+	display --to SCREEN --result OK --color GREEN --screen-indent 4 "Setting Git Preferences" $NC
+		update-alternatives --set editor /usr/bin/vim.basic
+		git config --global color.ui auto
+}
+
+init() {
+
+	local managedserver='yes'
+	
+	echo "This server will be Managed ? (y/n)";
+	read managedserver;
+
+	if [ $managedserver == 'y' ] ; then
+		#managed
+		display --to SCREEN --result OK --color GREEN --screen-indent 4 "Installing managed Server" $NC
+		initunmanaged #Devo lanciarlo perchè ho bisogno di alcuni pacchetti :)
+		initmanaged
+     	elif [ $managedserver == 'n' ] ; then
+		#UNmanaged
+		display --to SCREEN --result OK --color GREEN --screen-indent 4 "Installing UNmanaged Server" $NC
+		initunmanaged
+	else
+		echo "Error : type y or n"
+		exit 1
+	fi
+}
+
+phpchoice() {
+        ## Installo repository esterno solo se è php54 e non siamo su trusty 
+        if [ $OSVERSION != "trusty" ]; then
+                local phpch=''
+                echo "Do you want install php 5.4 ? (y/n)";
+                read phpch;
+                if [ $phpch == 'y' ] ; then
+                        add-apt-repository -y ppa:ondrej/php5-oldstable > /dev/null 2>&1 & spinner
+                        display --to SCREEN --result OK --color GREEN --screen-indent 4 "Adding php 5.4 ppa:ondrej/php5-oldstable Repository" $NC
+                        sudo apt-get update
+                else
+                        display --to SCREEN --result OK --color GREEN --screen-indent 4 "Using default php Repository" $NC
+                fi
+        fi
+return
+}
+
+apache() {
+	echo -e  "${nOS_red}Installing Apache ... $NC"
+	export DEBIAN_FRONTEND=noninteractive
+	## Installazione Apache
+
+	#Choose PHP version
+	phpchoice
+	
+	#Install Apache Worker on Precise and Lucid
+	if [ $OSVERSION == "precise" ] || [ $OSVERSION == "lucid" ]; then	
+		display --to SCREEN --result OK --color GREEN --screen-indent 4 "Configurin Worker Module" $NC
+                apt-get install -qqy apache2-mpm-worker > /dev/null 2>&1 & spinner
+                apt-get install -qqy libapache2-mod-fastcgi php5-fpm php5 php5-cli > /dev/null 2>&1 & spinner
+		apt-get -y install apache2 > /dev/null 2>&1 & spinner
+		wget -q http://tools-sys.neen.it/neenOsInstaller/$OSVERSION/php5-fpm.conf.txt -O /etc/apache2/conf.d/php5-fpm.conf > /dev/null 2>&1 & spinner
+		a2enmod actions fastcgi alias > /dev/null 2>&1 & spinner
+        	a2enmod rewrite > /dev/null 2>&1 & spinner
+		rpl webmaster@localhost tech@neen.it /etc/apache2/sites-available/default > /dev/null 2>&1 & spinner
+        	rpl "AllowOverride None" "AllowOverride All" /etc/apache2/sites-available/default > /dev/null 2>&1 & spinner
+        	rpl -w /var/www /var/www/01_default-site /etc/apache2/sites-available/default > /dev/null 2>&1 & spinner
+        	rpl -w "*:80" $nOS_IP:80 /etc/apache2/sites-available/default > /dev/null 2>&1 & spinner
+        	mkdir /etc/apache2/utenti > /dev/null 2>&1 & spinner
+        	mkdir /etc/apache2/ssl > /dev/null 2>&1 & spinner
+		display --to SCREEN --result OK --color GREEN --screen-indent 4 "Downloading and installing Apache" $NC
+		#HARDENING
+        	rpl "ServerSignature On" "ServerSignature Off" /etc/apache2/conf.d/security > /dev/null 2>&1 & spinner
+        	rpl "ServerTokens OS" "ServerTokens Prod" /etc/apache2/conf.d/security > /dev/null 2>&1 & spinner
+        	display --to SCREEN --result OK --color GREEN --screen-indent 4 "Hardening" $NC
+	fi
+
+	#Install Apache Worker on Trusty
+        if [ $OSVERSION == "trusty" ]; then 
+                display --to SCREEN --result OK --color GREEN --screen-indent 4 "Configurin Event Module" $NC
+                apt-get -y install apache2 > /dev/null 2>&1 & spinner
+		apt-get install -qqy libapache2-mod-fastcgi php5-fpm php5 > /dev/null 2>&1 & spinner
+                wget -q http://tools-sys.neen.it/neenOsInstaller/$OSVERSION/php5-fpm.conf.txt -O /etc/apache2/conf-available/php5-fpm.conf > /dev/null 2>&1 & spinner
+                a2enmod actions fastcgi alias > /dev/null 2>&1 & spinner
+		a2enmod rewrite > /dev/null 2>&1 & spinner
+                a2enconf php5-fpm > /dev/null 2>&1 & spinner
+                rpl -w /var/www/html /var/www/01_default-site /etc/apache2/sites-available/000-default.conf > /dev/null 2>&1 & spinner
+                rpl -w "*:80" $nOS_IP:80 /etc/apache2/sites-available/000-default.conf > /dev/null 2>&1 & spinner
+                mkdir /etc/apache2/utenti > /dev/null 2>&1 & spinner
+                mkdir /etc/apache2/ssl > /dev/null 2>&1 & spinner
+                display --to SCREEN --result OK --color GREEN --screen-indent 4 "Downloading & Installing Apache" $NC
+                #HARDENING
+                rpl "ServerSignature On" "ServerSignature Off" /etc/apache2/conf-available/security.conf > /dev/null 2>&1 & spinner
+                rpl "ServerTokens OS" "ServerTokens Prod" /etc/apache2/conf-available/security.conf > /dev/null 2>&1 & spinner
+                display --to SCREEN --result OK --color GREEN --screen-indent 4 "Hardening" $NC
+        fi
+
+	#PHP5-FPM TUNING
+	rpl "listen = 127.0.0.1:9000" "listen = /var/run/php5-fpm.sock" /etc/php5/fpm/pool.d/www.conf > /dev/null 2>&1 & spinner
+	rpl ";listen.owner = www-data" "listen.owner = www-data" /etc/php5/fpm/pool.d/www.conf > /dev/null 2>&1 & spinner
+	rpl ";listen.group = www-data" "listen.group = www-data" /etc/php5/fpm/pool.d/www.conf > /dev/null 2>&1 & spinner
+	rpl ";listen.mode = 0660" "listen.group = www-data" /etc/php5/fpm/pool.d/www.conf > /dev/null 2>&1 & spinner
+
+	#LOGROTATE
+        display --to SCREEN --result OK --color GREEN --screen-indent 4 "Custom Log Rotate" $NC
+ 	wget -q http://tools-sys.neen.it/neenOsInstaller/$OSVERSION/neen_apache.txt -O /etc/logrotate.d/neen_apache > /dev/null 2>&1 & spinner
+	display --to SCREEN --result OK --color GREEN --screen-indent 4 "Restarting Apache" $NC
+	service apache2 restart > /dev/null 2>&1 & spinner
+	service php5-fpm restart > /dev/null 2>&1 & spinner
+	
+	return
+}
+
+nginx() {
+	## Installazione nginx
+	echo -e  "${nOS_red}Installing nginx ... $NC"
+	
+	#Choose PHP version
+        phpchoice
+
+	#Adding nginx repository
+	display --to SCREEN --result OK --color GREEN --screen-indent 4 "Adding nginx Repository" $NC
+	add-apt-repository -y ppa:nginx/stable > /dev/null 2>&1 & spinner
+	apt-get update > /dev/null 2>&1 & spinner
+	display --to SCREEN --result OK --color GREEN --screen-indent 4 "Installing nginx" $NC
+	apt-get install -qqy nginx > /dev/null 2>&1 & spinner
+	#PHP STANDARD
+	apt-get install -qqy php5 php5-fpm php5-cli php5-cgi > /dev/null 2>&1 & spinner
+	mkdir /etc/nginx/utenti > /dev/null 2>&1 & spinner
+	mkdir /etc/nginx/ssl > /dev/null 2>&1 & spinner
+	mkdir /var/www > /dev/null 2>&1 & spinner
+	chown www-data.www-data /var/www > /dev/null 2>&1 & spinner
+	display --to SCREEN --result OK --color GREEN --screen-indent 4 "Hardening nginx" $NC
+
+	#HARDENING
+	rm /etc/nginx/sites-enabled/* > /dev/null 2>&1 & spinner
+	wget -q http://tools-sys.neen.it/neenOsInstaller/$OSVERSION/default-nginx.txt -O /etc/nginx/sites-available/neen-default > /dev/null 2>&1 & spinner
+	ln -s /etc/nginx/sites-available/neen-default /etc/nginx/sites-enabled/000neen-default > /dev/null 2>&1 & spinner
+	display --to SCREEN --result OK --color GREEN --screen-indent 4 "Hardening" $NC
+	
+	#LOGROTATE
+	wget -q http://tools-sys.neen.it/neenOsInstaller/$OSVERSION/neen_nginx.txt -O /etc/logrotate.d/neen_nginx > /dev/null 2>&1 & spinner
+	display --to SCREEN --result OK --color GREEN --screen-indent 4 "Custom Log Rotate" $NC
+
+	#PHP5-FPM TUNING
+        rpl "listen = 127.0.0.1:9000" "listen = /var/run/php5-fpm.sock" /etc/php5/fpm/pool.d/www.conf > /dev/null 2>&1 & spinner
+        rpl ";listen.owner = www-data" "listen.owner = www-data" /etc/php5/fpm/pool.d/www.conf > /dev/null 2>&1 & spinner
+        rpl ";listen.group = www-data" "listen.group = www-data" /etc/php5/fpm/pool.d/www.conf > /dev/null 2>&1 & spinner
+        rpl ";listen.mode = 0660" "listen.group = www-data" /etc/php5/fpm/pool.d/www.conf > /dev/null 2>&1 & spinner
+
+	service nginx restart > /dev/null 2>&1 & spinner
+        service php5-fpm restart > /dev/null 2>&1 & spinner
+	
+return
+}
+
+mysql() {
+#Installazione MysqlServer
+echo -e  "${nOS_red}Installing MYSQLServer ... $NC"
+	if [ ! -f $neenOsLock ] ; then
+        	PWD_MYSQL=$(makepasswd --char=11)
+        	#Salvo temporaneamente la pwd di mysql
+		echo $PWD_MYSQL > /tmp/.tmpmysqlpwd
+		DEBIAN_FRONTEND=noninteractive apt-get -qqy install mysql-server mysql-client > /dev/null 2>&1 & spinner
+        	mysqladmin -u root password $PWD_MYSQL
+		display --to SCREEN --result OK --color GREEN --screen-indent 4 "MYSQL server" $NC	
+	else
+        	display --to SCREEN --result SKIPPING --color YELLOW --screen-indent 4 "Skipping Mysql (already Installed)" $NC
+		PWD_MYSQL="Non settata"
+	fi
+
+	#Configure automysqlbackup
+	apt-get -qqy install automysqlbackup > /dev/null 2>&1 & spinner
+	wget -q http://tools-sys.neen.it/neenOsInstaller/$OSVERSION/automysqlbackup.txt -O /etc/default/automysqlbackup > /dev/null 2>&1 & spinner
+	display --to SCREEN --result OK --color GREEN --screen-indent 4 "Automysqlbackup" $NC
+
+	if [ ! -d "/backup/db" ]; then
+        	mkdir -p /backup/db > /dev/null 2>&1 & spinner
+	fi
+
+	service mysql restart > /dev/null 2>&1 & spinner
+	
+	return
+}
+
+phpmyadmin() {
+	echo -e  "${nOS_red}Installing PHPMyadmin ... $NC"
+	if [ ! -f $neenOsLock ] ; then
+		#Recupero Pwd Mysql e cancello
+		PWD_MYSQLTEMP=$(cat /tmp/.tmpmysqlpwd)
+		rm /tmp/.tmpmysqlpwd > /dev/null 2>&1 & spinner
+       	
+		#Installazione 
+		PWD_PHPMYADM="Non settata"
+        	export DEBIAN_FRONTEND=noninteractive
+        	
+		if [ $NEENWEBSERVER == 'apache2' ]; then
+			#Configuro DebConf
+			apt-get -qqy install debconf-utils > /dev/null 2>&1 & spinner
+			echo 'phpmyadmin phpmyadmin/dbconfifig-install boolean true' | debconf-set-selections
+			echo "phpmyadmin phpmyadmin/reconfigure-webserver multiselect $NEENWEBSERVER" | debconf-set-selections
+			echo "phpmyadmin phpmyadmin/mysql/admin-pass password $PWD_MYSQLTEMP" | debconf-set-selections
+			echo 'phpmyadmin phpmyadmin/mysql/app-pass password n33n000' | debconf-set-selections
+			echo 'phpmyadmin phpmyadmin/app-password-confirm password n33n000' | debconf-set-selections
+			display --to SCREEN --result OK --color GREEN --screen-indent 4 "Configuring Debconf" $NC
+		fi
+
+		apt-get -qqy install phpmyadmin > /dev/null 2>&1 & spinner
+ 
+		if [ $NEENWEBSERVER == 'apache2' ]; then
+			rpl -w "Alias /phpmyadmin" "Alias /neen_phpmyadmin"  /etc/phpmyadmin/apache.conf > /dev/null 2>&1 & spinner
+		fi
+
+		#Modifico phpmyadmin per permettere di essere inglobato negli iframes di neenpanel
+		if [ $OSVERSION != "trusty" ]; then
+			rpl -w "window.top.location.href=location;" "window.neen_frame.location.href=location;" /usr/share/phpmyadmin/libraries/auth/cookie.auth.lib.php > /dev/null 2>&1 & spinner
+		else
+			wget -q http://tools-sys.neen.it/neenOsInstaller/$OSVERSION/phpmyadminframes.txt -O /etc/phpmyadmin/conf.d/neen_allow_frames.php > /dev/null 2>&1 & spinner
+		fi
+      		
+		#HARDENING
+        	display --to SCREEN --result OK --color GREEN --screen-indent 4 "Hardening" $NC
+		#Creo utente apache
+        	PWD_PHPMYADM=$(makepasswd --char=5)
+        	htpasswd -bc /etc/$NEENWEBSERVER/utenti/phpmyadmin $(hostname)_phpmyadmin $PWD_PHPMYADM > /dev/null 2>&1 & spinner
+
+		if [ $NEENWEBSERVER == 'apache2' ]; then        
+			sed -i '8i      AuthType Basic' /etc/phpmyadmin/apache.conf > /dev/null 2>&1 & spinner
+			sed -i '9i      AuthName "Neen PhpMyadmin"' /etc/phpmyadmin/apache.conf > /dev/null 2>&1 & spinner
+			sed -i '10i     AuthUserFile /etc/apache2/utenti/phpmyadmin' /etc/phpmyadmin/apache.conf > /dev/null 2>&1 & spinner
+			sed -i '11i     Require valid-user' /etc/phpmyadmin/apache.conf > /dev/null 2>&1 & spinner
+			display --to SCREEN --result OK --color GREEN --screen-indent 4 "Security Rules" $NC
+		fi
+ 
+		if [ $NEENWEBSERVER == 'nginx' ]; then        
+			ln -s /usr/share/phpmyadmin/ /var/www/01_default-site/neen_phpmyadmin > /dev/null 2>&1 & spinner
+		fi
+
+		service $NEENWEBSERVER restart > /dev/null 2>&1 & spinner
+        else
+		display --to SCREEN --result SKIPPING --color YELLOW --screen-indent 4 "Phpmyadmin already Installed" $NC
+	fi
+
+	return
+}
+
+munin() {
+	echo -e  "${nOS_red}Installing Munin ... $NC"
+	PWD_MUNIN="Non settata"
+	apt-get -qqy install munin > /dev/null 2>&1 & spinner
+	apt-get -qqy install munin-plugins-extra > /dev/null 2>&1 & spinner
+	display --to SCREEN --result OK --color GREEN --screen-indent 4 "Configuring Munin plugins" $NC
+	##Lascio Munin autoconfigurarsi
+	munin-node-configure --shell | sh 
+	rm /etc/munin/plugins/ntp_* > /dev/null 2>&1 & spinner
+	rm /etc/munin/plugins/fw_* > /dev/null 2>&1 & spinner
+	rm /etc/munin/plugins/forks* > /dev/null 2>&1 & spinner
+	rm /etc/munin/plugins/mysql_isam_sp* > /dev/null 2>&1 & spinner
+        rm /etc/munin/plugins/mysql_innod* > /dev/null 2>&1 & spinner
+	rm /etc/munin/plugins/exim_mailstats > /dev/null 2>&1 & spinner
+        
+	display --to SCREEN --result OK --color GREEN --screen-indent 4 "Hardening" $NC
+	#HARDENING
+        PWD_MUNIN=$(makepasswd --char=5)
+        #Creo utente apache
+        htpasswd -bc /etc/$NEENWEBSERVER/utenti/munin $(hostname)_munin $PWD_MUNIN
+
+	rpl -w "[localhost.localdomain]" "[$(hostname -f)]" /etc/munin/munin.conf > /dev/null 2>&1 & spinner
+	
+	if [ $NEENWEBSERVER == 'apache2' ]; then
+		a2enmod status > /dev/null 2>&1
+		sed -i '/Order/d' /etc/apache2/conf.d/munin > /dev/null 2>&1 & spinner
+		sed -i '/Allow/d' /etc/apache2/conf.d/munin > /dev/null 2>&1 & spinner
+		sed -i '1iExtendedStatus On' /etc/apache2/mods-available/status.conf > /dev/null 2>&1 & spinner
+		rpl -w "Alias /munin" "Alias /neen_munin" /etc/apache2/conf.d/munin > /dev/null 2>&1 & spinner
+                echo '
+AuthType Basic
+AuthName "neen Restricted"
+AuthUserFile /etc/apache2/utenti/munin
+Require valid-user
+' > /var/cache/munin/www/.htaccess
+	display --to SCREEN --result OK --color GREEN --screen-indent 4 "Hardening" $NC
+	fi
+
+	ln -s /var/cache/munin/www /var/www/01_default-site/neen_munin > /dev/null 2>&1 & spinner
+
+	display --to SCREEN --result OK --color GREEN --screen-indent 4 "munin neenpanel" $NC
+
+	if [ ! -f $neenOsLock ] ; then
+		display --to SCREEN --result OK --color GREEN --screen-indent 4 "Cpan User Agent" $NC
+		#Installo dei moduli per Munin solo la prima volta
+		(echo y;echo o conf prerequisites_policy follow;echo o conf commit)|cpan > /dev/null 2>&1 & spinner
+		cpan LWP::UserAgent > /dev/null 2>&1 & spinner
+	fi 
+
+	echo ""
+
+	return
+}
+
+zend() {
+	echo -e  "${nOS_red}Installing Zend Server ... $NC"
+	apt-get install -qqy apache2 > /dev/null 2>&1 & spinner
+	if [ $OSVERSION != "trusty" ]; then
+        	echo "ERROR : Zend Installation is no more supported on your OS version"
+		exit 0
+	fi
+
+	#Seguo guida ufficale installazione Zend (http://files.zend.com/help/Zend-Server-6/content/deb_installing_zend_server.htm)
+	display --to SCREEN --result OK --color GREEN --screen-indent 4 "Bootstrap new installation" $NC
+	wget -q http://tools-sys.neen.it/neenOsInstaller/zend7/ZendServer-7.0.0-RepositoryInstaller-linux.tar.gz -O /tmp/ZendServer-7.0.0-RepositoryInstaller-linux.tar.gz > /dev/null 2>&1 & spinner
+	tar -xvf /tmp/ZendServer-7.0.0-RepositoryInstaller-linux.tar.gz  --directory=/tmp > /dev/null 2>&1 & spinner
+	/tmp/ZendServer-RepositoryInstaller-linux/install_zs.sh 5.5 
+
+	display --to SCREEN --result OK --color GREEN --screen-indent 4 "Restart Zend" $NC
+	
+	echo ""
+
+	return
+}
+
+virtualmininstall() {
+	## Installazione VirtualMin
+	echo -e  "${nOS_red}Installing Virtualmin ...  $NC"
+	wget http://software.virtualmin.com/gpl/scripts/install.sh -O /tmp/install.sh > /dev/null 2>&1 & spinner
+	chmod 700 /tmp/install.sh > /dev/null 2>&1 & spinner
+	display --to SCREEN --result OK --color GREEN --screen-indent 4 "Installing Virtualmin" $NC
+	/tmp/install.sh -f 
+	rm /tmp/install.sh > /dev/null 2>&1 & spinner
+
+	echo ""
+
+    # Default username@domain.tld
+    # No quota
+    virtualmin modify-plan --id 0 --no-quota
+    virtualmin modify-plan --id 0 --no-admin-quota
+    # Disabilita di default le feature per i nuovi virtualhost
+    display --to SCREEN --result OK --color GREEN --screen-indent 4 "Setting Virtualmin defaults" $NC
+    virtualmin set-global-feature --default-off mail
+    virtualmin set-global-feature --default-off webalizer
+    virtualmin set-global-feature --default-off ssl
+    virtualmin set-global-feature --default-off mysql
+    virtualmin set-global-feature --default-off spam
+    virtualmin set-global-feature --default-off virus
+    virtualmin set-global-feature --default-off spam
+    virtualmin set-global-feature --default-off virtualmin-awstats
+    
+    # Restart
+    service webmin restart > /dev/null 2>&1 & spinner
+
+return
+}
+
+perfomancehelper() {
+	#Perfomance Tuning 
+	neenlogo
+	echo "Perfomance Tuning :"
+
+	if [ ! -f /usr/bin/apachebuddy.pl ] ; then
+    		wget -q http://tools-sys.neen.it/neenOsInstaller/neen_perf/apachebuddy.pl.txt -O /usr/bin/apachebuddy.pl > /dev/null 2>&1 & spinner
+	fi
+
+	if ! dpkg-query -W mysqltuner ; then
+		apt-get install mysqltuner > /dev/null 2>&1 & spinner
+	fi
+	
+	echo "Apache Tuning : "
+	perl /usr/bin/apachebuddy.pl
+	echo ""
+	echo ""
+	echo "Mysql Tuning : "
+	mysqltuner
+}
+
+neenpanel() {
+	#Installazione pannello neen 
+	echo -e  "${nOS_red}Installing neen panel ... $NC"
+
+	#Creo /var/www prima dell'installazione di un webserver	
+	if [ ! -d "/var/www" ]; then
+        	mkdir -p /var/www/ > /dev/null 2>&1 & spinner
+		chown www-data.www-data /var/www > /dev/null 2>&1 & spinner
+	fi
+ 
+	if [ $nOS_ZEND = 1 ]; then
+		NEENPANEL='http://tools-sys.neen.it/neenOsInstaller/neenpanel/zend_default_site.tar.gz'
+	fi
+	
+	if [ $nOS_APACHE = 1 ]; then
+                NEENPANEL='http://tools-sys.neen.it/neenOsInstaller/neenpanel/default_site.tar.gz'
+        fi
+
+	if [ $nOS_VIRTUALMIN = 1 ]; then
+                NEENPANEL='http://tools-sys.neen.it/neenOsInstaller/neenpanel/virtualmin_default_site.tar.gz'
+        fi
+	
+	if [ $nOS_NGINX = 1 ]; then
+                NEENPANEL='http://tools-sys.neen.it/neenOsInstaller/neenpanel/default_site.tar.gz'
+        fi  
+
+	wget -q $NEENPANEL -O /var/www/neenpannel.tar.gz
+	tar -xvf /var/www/neenpannel.tar.gz --directory=/var/www/ > /dev/null 2>&1 & spinner
+    	rm /var/www/neenpannel.tar.gz > /dev/null 2>&1 & spinner
+	display --to SCREEN --result OK  --color GREEN --screen-indent 4 "Download & Unzip tar" $NC
+	return
+}
+
+neencreasito() {
+#Check if Virtualmin is installed, exit
+if nc -zv -w30 127.0.0.1 10000 >/dev/null 2>&1
+then
+        echo -e "${nOS_red}Virtualmin is enabled on this server, please install from Web Interface"
+	tput sgr0
+	exit 0
+fi
+
+#Check If Apache
+if [ -a "/etc/init.d/apache2" ]; then
+
+	echo "Apache2 detected..."
+	echo "Inserisci dominio (es: example.com):";
+	read domain;
+	echo "" 
+	echo "Inserisci Alias (es: www.example.com):";
+	read domain_alias;
+	echo "" 
+	
+	### Check $domain esiste
+	if ! grep "${domain}" /etc/apache2/sites-available/${domain}.conf > /dev/null 2>&1; then
+		echo "${domain} will be created" 
+		mkdir -p /var/www/${domain}/{htdocs,datadir,logs,cgi-bin};
+	echo "
+<VirtualHost *:80>
+	ServerName ${domain}
+	ServerAlias ${domain_alias}
+	ServerAdmin tech@neen.it
+
+	DocumentRoot /var/www/${domain}/htdocs
+
+	<Directory /var/www/${domain}/htdocs>
+		Options -Indexes +FollowSymLinks +MultiViews
+		AllowOverride All
+		Order allow,deny
+		allow from all
+	</Directory>
+
+	<Files ~ '^\.|\/\.'>
+    		Order allow,deny
+    		Deny from all
+	</Files>
+ 
+	ErrorLog /var/www/${domain}/logs/error.log
+	CustomLog /var/www/${domain}/logs/access.log combined
+</VirtualHost>
+" >> /etc/apache2/sites-available/${domain}.conf
+	 
+			display --to SCREEN --result OK  --color GREEN --screen-indent 4 "Testing Configuration" $NC
+			a2ensite ${domain}.conf 
+			/etc/init.d/apache2 reload
+	fi
+fi
+
+#Check If Apache
+if [ -a "/etc/init.d/nginx" ]; then
+
+        echo "nginx detected..."
+        echo "Inserisci dominio (es: example.com):";
+        read domain;
+        echo "" 
+        echo "Inserisci Alias (es: www.example.com):";
+        read domain_alias;
+        echo "" 
+
+        ### Check $domain esiste
+        if ! grep "${domain}" /etc/nginx/sites-available/${domain}.conf >> /dev/null; then
+                echo "${domain} will be created" 
+                mkdir -p /var/www/${domain}/{htdocs,datadir,logs,cgi-bin};
+
+        echo " 
+server {
+        listen   80;
+        server_name ${domain} ${domain_alias};
+
+        root /var/www/${domain}/htdocs;
+	
+	index index.php index.html index.htm;
+
+	location = /favicon.ico {
+		log_not_found off;
+		access_log off;
+		expires max;
+	}
+	location = /robots.txt {
+		allow all;
+		log_not_found off;
+		access_log off;
+	}
+	
+	location ~ /\. {
+		deny all;
+		access_log off;
+		log_not_found off;
+	}
+	
+	location ~* \.(sql|htaccess|htpasswd|tpl|html5|xhtml) {
+		deny all;
+	}
+
+        access_log /var/www/${domain}/logs/access.log;
+        error_log /var/www/${domain}/logs/error.log;
+
+        location ~ \.php$ {
+                try_files $uri =404;
+                fastcgi_pass unix:/var/run/php5-fpm.sock;
+                fastcgi_index index.php;
+                fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                include fastcgi_params;    
+	}
+}
+" >> /etc/nginx/sites-available/${domain}.conf
+
+	ln -s /etc/nginx/sites-available/${domain}.conf /etc/nginx/sites-enabled/${domain}.conf
+                        /etc/init.d/nginx reload
+        fi
+fi
+}
+
+## START !!!
+#Controllo se viene lanciato con i permessi di root
+NOSTMPVAR=`${ID_CMD} -u 2>/dev/null`
+if [ "${NOSTMPVAR}" != "0" -a "${NOSTMPCAR}" != "root" ]; then
+	echo "Need root privileges" $NC	
+	exit 1
+fi
+
+#Se nessun input Help
+if [ $# -eq 0 ]; then
+        help
+        exit 0
+fi
+
+#Controllo INPUT
+while [ $# -ge 1 ]; do
+case $1 in
+    -i| --init)
+	  	nOS_INIT=1
+		nOS_SCRIPT=1
+		;;
+    -h | --help)
+        help
+        exit 0
+        ;;
+    -a | --apache)
+		nOS_APACHE=1
+		NEENWEBSERVER='apache2'
+		;;
+    -za | --zenda)
+		nOS_ZEND=1
+		NEENWEBSERVER='apache2'	
+		;;
+    -zn | --zendn)
+                nOS_ZEND=1
+                NEENWEBSERVER='nginx'
+                ;;
+    -vm | --virtualmin)
+		nOS_VIRTUALMIN=1
+		NEENWEBSERVER='apache2'
+		;;
+    -n | --nginx)
+		nOS_NGINX=1
+		NEENWEBSERVER='nginx'
+		;;
+    -w | --webserver)
+		neencreasito
+		exit 0
+		;;
+    -v | --version)
+                echo "neenOsInstall v. $NEEN_VERSION"
+                exit 0
+		;;
+    -sp | --showpassword)
+		showpassword
+		exit 0
+	;;
+    -ph | --perfomancehelper)
+                perfomancehelper
+                exit 0
+        ;;
+    *)
+        echo "ERROR, no argument found, run help"
+	exit 1
+        ;;
+esac
+shift
+done
+
+#Se lancio neenosinstall in init mode
+if [ $nOS_INIT = 1 ]; then
+	init
+fi
+
+#Installazione Apache
+if [ $nOS_APACHE = 1 ]; then
+	os-check
+	apache
+	mysql
+	neenpanel
+	phpmyadmin
+	munin
+
+        #Mostro le password a fine installazione e riavvio alcuni demoni:
+        service apache2 restart
+        service munin-node restart
+
+	if [ ! -f $neenOsLock ] ; then
+		display --to SCREEN --result OK --color GREEN "Installazione completata con successo"
+		display --to SCREEN ""
+		display --to LOG "Sistema installato : $(date) con $(neenosinstall -v)"
+		display --to LOG "-------------------------"
+		display --to SCREEN+LOG --color RED "neen control panel :"
+		tput sgr0	
+	        display --to SCREEN+LOG "http://$(hostname -f)/neen_cp"
+		display --to SCREEN+LOG "-------------------------"	
+		display --to SCREEN+LOG "MYSQL :"
+		display --to SCREEN+LOG "Username: root"
+                display --to SCREEN+LOG "Password: $PWD_MYSQL"
+                display --to SCREEN+LOG "--------------------------"
+                display --to SCREEN+LOG "PhpMyadmin :"
+                display --to SCREEN+LOG "Username: $(hostname)_phpmyadmin"
+                display --to SCREEN+LOG "Password: $PWD_PHPMYADM"
+                display --to SCREEN+LOG "--------------------------"
+		display --to SCREEN+LOG "Munin :"
+                display --to SCREEN+LOG "Username: $(hostname)_munin"
+                display --to SCREEN+LOG "Password: $PWD_MUNIN"
+                display --to SCREEN+LOG "--------------------------"
+	fi
+	
+fi
+
+#Installazione VirtualMin
+if [ $nOS_VIRTUALMIN = 1 ]; then
+	os-check
+	apache
+        mysql
+        neenpanel
+	phpmyadmin
+        munin
+        virtualmininstall
+
+	#Mostro le password a fine installazione e riavvio alcuni demoni:
+        service apache2 restart
+        service munin-node restart
+
+	if [ ! -f $neenOsLock ] ; then
+                display --to SCREEN --result OK --color GREEN "Installazione completata con successo"
+                display --to SCREEN ""
+                display --to LOG "Sistema installato : $(date) con $(neenosinstall -v)"
+                display --to LOG "-------------------------"
+                display --to SCREEN+LOG --color RED "neen control panel :"
+                tput sgr0
+                display --to SCREEN+LOG "http://$(hostname -f)/neen_cp"
+                display --to SCREEN+LOG "-------------------------"
+                display --to SCREEN+LOG "MYSQL :"
+                display --to SCREEN+LOG "Username: root"
+                display --to SCREEN+LOG "Password: $PWD_MYSQL"
+                display --to SCREEN+LOG "--------------------------"
+                display --to SCREEN+LOG "PhpMyadmin :"
+                display --to SCREEN+LOG "Username: $(hostname)_phpmyadmin"
+                display --to SCREEN+LOG "Password: $PWD_PHPMYADM"
+                display --to SCREEN+LOG "--------------------------"
+                display --to SCREEN+LOG "Munin :"
+                display --to SCREEN+LOG "Username: $(hostname)_munin"
+                display --to SCREEN+LOG "Password: $PWD_MUNIN"
+                display --to SCREEN+LOG "--------------------------"
+        	display --to SCREEN+LOG "Server installato con VirtualMin"
+	fi
+fi
+
+#Installazione ZendServer
+if [ $nOS_ZEND = 1 ]; then
+	os-check
+	zend
+	mysql
+	neenpanel
+	phpmyadmin
+	munin
+
+        #Mostro le password a fine installazione e riavvio alcuni demoni:
+        service zend-server restart
+        service munin-node restart
+
+	if [ ! -f $neenOsLock ] ; then
+                display --to SCREEN --result OK --color GREEN "Installazione completata con successo"
+                display --to SCREEN ""
+                display --to LOG "Sistema installato : $(date) con $(neenosinstall -v)"
+                display --to LOG "-------------------------"
+                display --to SCREEN+LOG --color RED "neen control panel :"
+                tput sgr0
+                display --to SCREEN+LOG "http://$(hostname -f)/neen_cp"
+                display --to SCREEN+LOG "-------------------------"
+                display --to SCREEN+LOG "MYSQL :"
+                display --to SCREEN+LOG "Username: root"
+                display --to SCREEN+LOG "Password: $PWD_MYSQL"
+                display --to SCREEN+LOG "--------------------------"
+                display --to SCREEN+LOG "PhpMyadmin :"
+                display --to SCREEN+LOG "Username: $(hostname)_phpmyadmin"
+                display --to SCREEN+LOG "Password: $PWD_PHPMYADM"
+                display --to SCREEN+LOG "--------------------------"
+                display --to SCREEN+LOG "Munin :"
+                display --to SCREEN+LOG "Username: $(hostname)_munin"
+                display --to SCREEN+LOG "Password: $PWD_MUNIN"
+                display --to SCREEN+LOG "--------------------------"
+                display --to SCREEN+LOG "Zend Server"
+                display --to SCREEN+LOG "Username: admin"
+                display --to SCREEN+LOG "Password: $PWD_ZEND"
+        fi
+fi
+
+#Installazione NGINX
+if [ $nOS_NGINX = 1 ]; then
+	os-check
+	nginx
+        mysql
+        neenpanel
+	phpmyadmin
+        munin
+
+        #Mostro le password a fine installazione e riavvio alcuni demoni:
+        service nginx restart
+        service munin-node restart
+	service php5-fpm restart
+
+        if [ ! -f $neenOsLock ] ; then
+                display --to SCREEN --result OK --color GREEN "Installazione completata con successo"
+                display --to SCREEN ""
+                display --to LOG "Sistema installato : $(date) con $(neenosinstall -v)"
+                display --to LOG "-------------------------"
+                display --to SCREEN+LOG --color RED "neen control panel :"
+                tput sgr0
+                display --to SCREEN+LOG "http://$(hostname -f)/neen_cp"
+                display --to SCREEN+LOG "-------------------------"
+                display --to SCREEN+LOG "MYSQL :"
+                display --to SCREEN+LOG "Username: root"
+                display --to SCREEN+LOG "Password: $PWD_MYSQL"
+                display --to SCREEN+LOG "--------------------------"
+                display --to SCREEN+LOG "PhpMyadmin :"
+                display --to SCREEN+LOG "Username: $(hostname)_phpmyadmin"
+                display --to SCREEN+LOG "Password: $PWD_PHPMYADM"
+                display --to SCREEN+LOG "--------------------------"
+                display --to SCREEN+LOG "Munin :"
+                display --to SCREEN+LOG "Username: $(hostname)_munin"
+                display --to SCREEN+LOG "Password: $PWD_MUNIN"
+        fi
+fi
