@@ -1,1 +1,787 @@
-deb/usr/bin/neenosinstall
+#!/bin/bash
+# neenOsInstaller -- Installa il sistema operativo sencondo le specifiche
+# fornite nella wiki : http://wiki.neen.it/index.php/Installazione_server_linux
+# Copyright (c), Luigi Molinaro (luigi.molinaro AT neen DOT it)
+
+##Neendo Note server
+neendonoteURL='https://www.neen.do/ws.php/servers/addservernote';
+neendonote_retr_URL='https://www.neen.do/ws.php/servers/getservernotes';
+####################
+#COLORI 
+####################
+# Setto l'output di messaggi [ OK ] ; [Warning] ; [Failed] ;
+nOS_red='\e[0;31m'
+nOS_green='\e[0;32m'
+nOS_yellow='\e[1;33m'
+nOS_cyan='\e[0;36m'
+nOS_orange='\e[0;33m'
+# Setup [ OK ] {}
+nOS_ok="[ ${nOS_green}OK $NC]"
+nOS_warning="[ ${nOS_yellow}Already-Installed $NC]"
+nOS_ko="[ ${nOS_red}Failed $NC]"
+NC=$(tput sgr0)
+bold=`tput bold`
+#########
+ID_CMD=id
+NEEN_VERSION=$(cd /neen/neenosinstall && git describe --abbrev=0)
+#########
+nOS_IP=$(ip addr | grep 'state UP' -A2 | tail -n1 | awk '{print $2}' | cut -f1  -d'/')
+neenOsLock="/root/.neenosinstall"
+##################################################################################
+#FUNZIONI
+neenlogo(){
+echo -e "$nOS_orange"
+echo -e "   ____  ___  ___  ____ "
+echo -e "  |  _ \/ _ \/ _ \/ _  |"
+echo -e "  | | |   __/  __  | | |"
+echo -e "  |_| |_\___|\___|_| |_|"
+echo -e "${bold} High-Perfomance Hosting  "
+echo ""
+tput sgr0
+}
+
+help() {
+	neenlogo
+	echo ""
+	echo -e "${bold} -i     --init${NC}                     Installa il sistema da zero, aggancio puppet, da usare la prima volta"
+	echo -e "${bold} -h     --help${NC}                     Mostra la schermata di help"
+	echo -e "${bold} -v     --version${NC}                  Mostra versione software"
+	echo -e "${nOS_red}"
+	echo "note  :"
+        tput sgr0
+	echo "----------------------------------------------------------------------------------------"
+	echo -e "${bold}-in     --insertnote${NC}               Inserisci nota in neen.do/slack"
+        echo -e "${bold}-rn     --retrivenote${NC}              Recupera nota da neen.do" 
+	echo -e "                                               (default last 3 note, accetta parametro n note es: neenosinstall -rn 2)"
+	echo -e "${bold}-ii     --insertinfnote${NC}            Informazioni infrastruttura"
+	echo -e "${nOS_red}"
+	echo "apache :"
+	tput sgr0
+	echo "----------------------------------------------------------------------------------------"
+	echo -e "${bold} -a     --apache${NC}                   Installa apache + mysql + munin + pannello neen"
+	echo -e "${bold}-vm     --virtualmin${NC}               Installa virtualmin + mysql + pannello neen"
+	echo -e "${bold}-cl     --cloudlinux${NC}               Installa cloudlinux + mysql + pannello neen (integrato)"
+	echo -e "${nOS_red}"
+	echo "nginx  :"
+	tput sgr0
+	echo "----------------------------------------------------------------------------------------"
+	echo -e "${bold} -n     --nginx${NC}                    Installa nginx + mysql + munin + pannello neen"
+	echo -e "${nOS_red}"
+        echo "tools  :"
+        tput sgr0
+	echo "----------------------------------------------------------------------------------------"
+	echo -e "${bold}-sp     --showpassword${NC}             Visualizza File Password"
+	echo -e "${bold} -w     --webserver${NC}                Script creazione Host nginx/apache"
+	echo -e "${bold}-ph     --perfomancehelper${NC}         Aiuto tuning Apache + Mysql"
+	echo -e "${bold}-cs     --contasessioni${NC}            Installa tool contasessioni"
+	tput sgr0
+	echo ""
+	return
+}
+
+display() {
+
+nSLOGFILE=/root/.neenosinstall
+##########################
+# COLORI per DISPLAY
+#########################
+
+NORMAL="\e[0;39m"       # Foreground colour to default
+RED='\e[0;31m'          # Bright red
+GREEN='\e[0;32m'        # Green
+YELLOW='\e[1;33m'       # Purple
+BLACK='\e[0;30m'        # Black
+ORANGE='\e[0;33m'
+CYAN='\e[0;36m'
+NC=$(tput sgr0)
+	
+#
+	# This function is used to display text messages on to the
+	# users screen, as well as in to the log file. The same
+	# message is written to both. However, the screen may have
+	# a coloured result (green for good, red for bad, etc), and
+	# the log file will have the time prefixed to the message.
+	#
+	# Syntax: display --to <destination>
+	#		  [--screen-indent <n>] [--log-indent <n>]
+	#		  [--nl [<n>]] [--nl-after] [--log-nl] [--screen-nl]
+	#		  [--result <result> --color <colour>]
+	#		  <message>
+	#
+	# where the destination can be one of SCREEN, LOG or SCREEN+LOG.
+	#
+	# The --screen-indent and --log-indent options are used to
+	# forcibly indent a message.
+	# The --nl option causes a blank-line to be output before the
+	# message both on the screen and in the log file. A following
+	# number can be used to indicate how many blank lines should
+	# be displayed on the screen.
+	# The --log-nl option outputs a blank line only in the log file.
+	# The --screen-nl option outputs a blank line on the screen
+	# regardless of whether SCREEN was specified or not.
+	# The --nl-after option outputs a blank line on the screen after
+	# the message.
+	#
+
+	#
+	# We first initialize some variables and then
+	# process the switches used.
+	#
+
+	WARN_MSG=0; NL=0; NLAFTER=0; LOGINDENT=0; SCREENINDENT=0
+	LOGNL=0; SCREENNL=0
+	WRITETO=''; RESULT=''; COLOR=''; MSG=''
+	LINE1=''; LOGLINE1=''; SPACES=''
+
+	DISPLAY_LINE="display $*"
+
+	if [ $# -le 0 ]; then
+		echo "Error: Invalid display call - no arguments given"
+		return
+	fi
+
+	while [ $# -ge 1 ]; do
+		case "$1" in
+		--to)
+			case "$2" in
+			SCREEN|LOG|SCREEN+LOG)
+				WRITETO=$2
+				;;
+			*)
+				echo "Error: Invalid display destination: $2   Display line: ${DISPLAY_LINE}"
+				return
+				;;
+			esac
+
+			shift
+			;;
+		--result)
+			RESULT=$2
+
+			shift
+			;;
+		--color)
+			test -n "$2" && COLOR=`eval "echo \\${$2}"`
+
+			if [ -z "${COLOR}" ]; then
+				echo "Error: Invalid display color: $2   Display line: ${DISPLAY_LINE}"
+				return
+			fi
+
+			shift
+			;;
+		--log-indent)
+			LOGINDENT=$2
+
+			if [ -z "${LOGINDENT}" ]; then
+				echo "Error: No --log-indent value given.   Display line: ${DISPLAY_LINE}"
+				return
+			elif [ -z "`echo ${LOGINDENT} | grep '^[0-9]*$'`" ]; then
+				echo "Error: Invalid '--log-indent' value given: $2   Display line: ${DISPLAY_LINE}"
+				return
+			fi
+
+			shift
+			;;
+		--screen-indent)
+			SCREENINDENT=$2
+
+			if [ -z "${SCREENINDENT}" ]; then
+				echo "Error: No --screen-indent value given.   Display line: ${DISPLAY_LINE}"
+				return
+			elif [ -z "`echo ${SCREENINDENT} | grep '^[0-9]*$'`" ]; then
+				echo "Error: Invalid '--screen-indent' value given: $2   Display line: ${DISPLAY_LINE}"
+				return
+			fi
+
+			shift
+			;;
+		--nl)
+			NL=1
+
+			case "$2" in
+			[0-9])
+				NL=$2
+				shift
+				;;
+			esac
+			;;
+		--log-nl)
+			LOGNL=1
+			;;
+		--screen-nl)
+			SCREENNL=1
+			;;
+		--nl-after)
+			NLAFTER=1
+			;;
+		*)
+			MSG=$1
+			shift
+			break
+			;;
+		esac
+
+		shift
+	done
+
+	test "${WRITETO}" = "SCREEN" -o "${WRITETO}" = "SCREEN+LOG" && WRITETOTTY=1 || WRITETOTTY=0
+
+	test "${WRITETO}" = "LOG" -o "${WRITETO}" = "SCREEN+LOG" && WRITETOLOG=1 || WRITETOLOG=0
+
+
+	#
+	# Now check that the options we have been given make sense.
+	#
+
+	if [ $WRITETOTTY -eq 0 -a $WRITETOLOG -eq 0 ]; then
+		echo "Error: Invalid display destination: Display line: ${DISPLAY_LINE}"
+		return
+	elif [ $WRITETOTTY -eq 1 -a -n "${RESULT}" -a -z "${COLOR}" ]; then
+		echo "Error: Invalid display - no color given: Display line: ${DISPLAY_LINE}"
+		return
+	fi
+	
+    LINE1="${MSG}"
+
+	#
+	# At this point LINE1 is the text of the message. We have to
+	# see if the message is to be indented, and must prefix the
+	# time to log file messages. We must do the log file first
+	# because it uses LINE1.
+	#
+
+	if [ $WRITETOLOG -eq 1 ]; then
+		#LOGLINE1=`date '+[%H:%M:%S]'`
+
+		test $NL -gt 0 -o $LOGNL -eq 1 && echo "${LOGLINE1}" >>${nSLOGFILE}
+
+		test $LOGINDENT -gt 0 && SPACES=`echo "${BLANK_LINE}" | cut -c1-$LOGINDENT`
+		LOGLINE1="${LOGLINE1} ${SPACES}${LINE1}"
+	fi
+
+	if [ $WRITETOTTY -eq 1 -a $SCREENINDENT -gt 0 ]; then
+		SPACES=`echo "${BLANK_LINE}" | cut -c1-$SCREENINDENT`
+		LINE1="${SPACES}${LINE1}"
+	fi
+
+
+	#
+	# We now check to see if a result is to be output. If it is,
+	# then we need to space-out the line and color the result.
+	#
+
+	if [ -n "${RESULT}" ]; then
+		if [ $WRITETOTTY -eq 1 ]; then
+			LINE1_NUM=`echo "${LINE1}" | wc -c | tr -d ' '`
+			NUM_SPACES=`expr 62 - ${LINE1_NUM}`
+			test $NUM_SPACES -lt 1 && NUM_SPACES=1
+
+			LINE1="${LINE1}\033[${NUM_SPACES}C[ ${COLOR}${RESULT}${NORMAL} ]"
+		fi
+
+		if [ $WRITETOLOG -eq 1 ]; then
+			LOGLINE1_NUM=`echo "${LOGLINE1}" | wc -c | tr -d ' '`
+			NUM_SPACES=`expr 62 - ${LOGLINE1_NUM}`
+			test $NUM_SPACES -lt 1 && NUM_SPACES=1
+			SPACES=`echo "${BLANK_LINE}" | cut -c1-$NUM_SPACES`
+
+			LOGLINE1="${LOGLINE1}${SPACES}[ ${RESULT} ]"
+		fi
+	elif [ $WRITETOTTY -eq 1 -a -n "${COLOR}" ]; then
+		LINE1="${COLOR}${LINE1}${NORMAL}"
+	fi
+
+
+	#
+	# We can now output the message. We start with any required blank
+	# lines, and then the first line. If this is a warning message we
+	# write to the log file any additional lines.
+	#
+
+	if [ $SCREENNL -eq 1 ]; then
+		echo ""
+	fi
+
+	if [ $WRITETOTTY -eq 1 ]; then
+		NLLOOP=$NL
+		while test $NLLOOP -gt 0; do
+			echo ""
+			NLLOOP=`expr ${NLLOOP} - 1`
+		done
+
+		echo -e "${LINE1}"
+	fi
+
+	if [ $WRITETOLOG -eq 1 ]; then
+		echo "${LOGLINE1}" >>${nSLOGFILE}
+	fi
+
+	#
+	# Output a final blank line if requested to do so.
+	#
+
+	test $WRITETOTTY -eq 1 -a $NLAFTER -eq 1 && echo ""
+
+	return
+}
+
+showpassword() {
+	neenlogo
+	if [ ! -f $neenOsLock ] ; then
+		echo ""
+		echo "Password file not found"
+	else
+		echo ""
+		cat $neenOsLock	
+		echo ""
+	fi
+}
+
+spinner()
+{
+    local pid=$!
+    local delay=0.75
+    local spinstr='|/-\'
+    while [ "$(ps a | awk '{print $1}' | grep $pid)" ]; do
+        local temp=${spinstr#?}
+        printf " [%c]  " "$spinstr"
+        local spinstr=$temp${spinstr%"$temp"}
+        sleep $delay
+        printf "\b\b\b\b\b\b"
+    done
+    printf "    \b\b\b\b"
+}
+
+initunmanaged() {
+	#Lancio playbook init 
+	display --to SCREEN --result OK --color GREEN --screen-indent 4 "Launching init ansible playbook" $NC
+	ansible-playbook -i /neen/ansible/hosts/localhost /neen/ansible/neen.yml --extra-vars "managed=False" || exit 1
+return
+}
+
+initmanaged() {
+	#Aggiungo il nodo al puppet master	
+	ansible-playbook -i /neen/ansible/hosts/localhost /neen/ansible/neen.yml || exit 1
+	ansible-playbook -i /neen/ansible/hosts/localhost /neen/ansible/puppet.yml || exit 1
+	
+	#Aggiungo il server ad Icinga
+	display --to SCREEN --result OK --color GREEN --screen-indent 4 "Setting Icinga" $NC
+	local infrastructure
+	local customer
+	local h24
+	echo "Infrastrucure? (es: cloud1,cloud2,strato1,vmware,aws,ovh)";
+        read infrastructure;
+	echo "Customer (es: neen)";
+        read customer;
+        echo "Cliente in h24? (yes|no)";
+        read h24;
+
+	ansible-playbook -i /neen/ansible/hosts/localhost /neen/ansible/icinga.yml --extra-vars "infrastructure=$infrastructure customer=$customer h24=$h24" || exit 1
+	
+	# Configuring GIT Preferences
+	display --to SCREEN --result OK --color GREEN --screen-indent 4 "Setting Git Preferences" $NC
+		python -mplatform | grep Ubuntu && update-alternatives --set editor /usr/bin/vim.basic
+		git config --global color.ui auto
+	
+return
+}
+
+init() {
+	local managedserver='yes'
+	
+	echo "This server will be Managed ? (y/n)";
+	read managedserver;
+
+	if [ $managedserver == 'y' ] ; then
+		#managed
+		display --to SCREEN --result OK --color GREEN --screen-indent 4 "Installing managed Server" $NC
+		initmanaged
+     	elif [ $managedserver == 'n' ] ; then
+		#UNmanaged
+		display --to SCREEN --result OK --color GREEN --screen-indent 4 "Installing UNmanaged Server" $NC
+		initunmanaged
+	else
+		echo -e  "${nOS_red}Error type y or n ... $NC"
+		exit 1
+	fi
+}
+
+apache() {
+	echo "Choose php version: (5.6|7.0)";
+        read phpversion;
+	
+	echo -e  "${nOS_red}Installing apache ... $NC"
+
+        #Installazione Apache     
+        ansible-playbook -i /neen/ansible/hosts/localhost /neen/ansible/apache.yml --extra-vars "phpversion=$phpversion" || exit 1
+
+        # Installation done
+        display --to SCREEN --result OK --color GREEN --screen-indent 4 "apache installed" $NC
+
+return
+}
+
+nginx() {
+        echo "Choose php version: (5.6|7.0)";
+        read phpversion;
+
+        ## Installazione nginx
+        echo -e  "${nOS_red}Installing nginx ... $NC"
+        ansible-playbook -i /neen/ansible/hosts/localhost /neen/ansible/nginx.yml --extra-vars "phpversion=$phpversion" || exit 1
+
+	# Installation done
+        display --to SCREEN --result OK --color GREEN --screen-indent 4 "nginx installed" $NC
+
+return
+}
+
+cloudlinux() {
+        ## Installazione cloudlinux
+        echo -e  "${nOS_red}Installing cloudlinux ... $NC"
+        ansible-playbook -i /neen/ansible/hosts/localhost /neen/ansible/install-cloudlinux-apache.yml || exit 1
+        PWD_NEENCP=$(cat ~/.ansible.neen_cp.installed)
+
+        # Installation done
+        display --to SCREEN --result OK --color GREEN --screen-indent 4 "CloudLinux Installed" $NC
+
+return
+}
+
+mysql() {
+        PWD_MYSQL="NOT INSTALLED"
+	echo ""
+	echo "Install database server ? (y/n)";
+        read dbserver;
+
+	if [ $dbserver == 'y' ] ; then
+		PWD_MYSQL=$(pwgen 10 1)
+
+		echo "Choose database server: (1/2) 1=[MYSQL] 2=[MARIADB]";
+        	read dbversion;
+
+    if [ $dbversion == 1 ] ; then
+      echo "Choose MYSQL version: (1/2) 1=[5.6] 2=[5.7]"
+            read dbflavour;
+
+			case ${dbflavour} in
+				"1")	mysql_version="" ;;
+				"2")	mysql_version="-5.7" ;;
+			esac
+		#MYSQL
+		if [ $dbversion == 1 ] ; then
+			echo "Install Automysqlbackup? (y/n)"
+					read install_automysqlbackup
+			display --to SCREEN --result OK --color GREEN --screen-indent 4 "Installing mysql server" $NC
+        		ansible-playbook -i /neen/ansible/hosts/localhost /neen/ansible/mysql.yml --extra-vars "mysql_secure_installation=true mysql_root_password=$PWD_MYSQL mysql_version=$mysql_version install_automysqlbackup=$install_automysqlbackup" || exit 1
+		fi
+		fi
+
+		#MariaDB
+		if [ $dbversion == 2 ] ; then
+			echo "Choose MariaDB version: (1/2/3) 1=Stable(10.1) 2=Dev(10.2) 3=Stable(5.5)"
+      	  	read dbflavour;
+			case ${dbflavour} in
+				"1")	mariadb_version="10.1" ;;
+				"2")	mariadb_version="10.2" ;;
+				"3")	mariadb_version="5.5" ;;
+			esac
+			echo "Install Automysqlbackup? (y/n)"
+					read install_automysqlbackup
+			display --to SCREEN --result OK --color GREEN --screen-indent 4 "Installing mariadb server" $NC
+                        ansible-playbook -i /neen/ansible/hosts/localhost /neen/ansible/mariadb.yml --extra-vars "mariadb_secure_installation=true mysql_root_password=$PWD_MYSQL mariadb_version=$mariadb_version install_automysqlbackup=$install_automysqlbackup" || exit 1
+	
+		fi
+	else
+		display --to SCREEN --result WARN --color YELLOW --screen-indent 4 "Skipping database Installation" $NC
+	fi
+return
+}
+
+virtualmininstall() {
+	## Installazione VirtualMin
+	echo -e  "${nOS_red}Installing Virtualmin ...  $NC"
+	wget http://software.virtualmin.com/gpl/scripts/install.sh -O /tmp/install.sh > /dev/null 2>&1 & spinner
+	chmod 700 /tmp/install.sh > /dev/null 2>&1 & spinner
+	display --to SCREEN --result OK --color GREEN --screen-indent 4 "Installing Virtualmin" $NC
+	/tmp/install.sh -f 
+	rm /tmp/install.sh > /dev/null 2>&1 & spinner
+
+	echo ""
+
+    # Default username@domain.tld
+    # No quota
+    virtualmin modify-plan --id 0 --no-quota
+    virtualmin modify-plan --id 0 --no-admin-quota
+    # Disabilita di default le feature per i nuovi virtualhost
+    display --to SCREEN --result OK --color GREEN --screen-indent 4 "Setting Virtualmin defaults" $NC
+    virtualmin set-global-feature --default-off mail
+    virtualmin set-global-feature --default-off webalizer
+    virtualmin set-global-feature --default-off ssl
+    virtualmin set-global-feature --default-off mysql
+    virtualmin set-global-feature --default-off spam
+    virtualmin set-global-feature --default-off virus
+    virtualmin set-global-feature --default-off spam
+    virtualmin set-global-feature --default-off virtualmin-awstats
+    
+    # Restart
+    service webmin restart > /dev/null 2>&1 & spinner
+
+return
+}
+
+perfomancehelper() {
+	#Perfomance Tuning 
+	neenlogo
+	echo "Perfomance Tuning :"
+
+	if [ ! -f /usr/bin/apachebuddy.pl ] ; then
+    		wget -q http://tools-sys.neen.it/neenOsInstaller/neen_perf/apachebuddy.pl.txt -O /usr/bin/apachebuddy.pl > /dev/null 2>&1 & spinner
+	fi
+
+	if ! dpkg-query -W mysqltuner ; then
+		apt-get install mysqltuner > /dev/null 2>&1 & spinner
+	fi
+	
+	echo "Apache Tuning : "
+	perl /usr/bin/apachebuddy.pl
+	echo ""
+	echo ""
+	echo "Mysql Tuning : "
+	mysqltuner
+}
+
+neenpanel() {
+	#Installazione pannello neen 
+	echo -e  "${nOS_red}Installing neen panel ... $NC"
+        ansible-playbook -i /neen/ansible/hosts/localhost /neen/ansible/neen_cp.yml --extra-vars "phpversion=$phpversion" || exit 1
+	PWD_NEENCP=$(cat ~/.ansible.neen_cp.installed)
+        
+	display --to SCREEN --result OK --color GREEN --screen-indent 4 "neen control panel Installed" $NC
+return
+}
+
+neencreasito() {
+        #Check if Virtualmin is installed, exit
+        if nc -zv -w30 127.0.0.1 10000 >/dev/null 2>&1
+        then
+                echo -e "${nOS_red}Virtualmin is enabled on this server, please install from Web Interface"
+                tput sgr0
+                exit 0
+        fi
+        
+	#Check webserver type
+        if [ -a "/etc/init.d/apache2" ]; then
+                echo "apache2 detected..."
+                neen_ansible_webserver='apache'
+        else
+                echo "nginx detected..."
+                neen_ansible_webserver='nginx'
+        fi
+
+	#Verifico se ho la versione del php installato
+	php -i | grep 'PHP Version' -m 1 | cut -d '.' -f 1,2 | awk '{print $4;}' > /root/.ansible.php.installed
+
+	#Genero password
+	user_pwd=$(pwgen 10 1)
+
+        #Leggo i valori
+        echo "Inserisci Nome (es: example.com):";
+        read domain;
+        echo "" 
+        echo "Inserisci Alias (es: www.example.com):";
+        read domain_alias;
+        echo "" 
+        echo "Inserisci User (es: example):";
+        read user;
+        echo "" 
+
+        ansible-playbook -i /neen/ansible/hosts/localhost /neen/ansible/$neen_ansible_webserver-vhost.yml  --extra-vars "server_name=$domain server_alias=$domain_alias user=$user user_pwd=$user_pwd" || exit 1
+
+        display --to SCREEN "--------------------------"
+        display --to SCREEN "Installato dominio $domain con alias $domain_alias"
+        display --to SCREEN ""
+        display --to SCREEN "Utenza FTP/SFTP"
+        display --to SCREEN "User : $user"
+        display --to SCREEN "Password : $user_pwd"
+        display --to SCREEN ""
+        display --to SCREEN "Utenza MYSQL (TOIMPLEMENT)"
+
+return
+}
+
+###SEZIONE NOTE SERVER ##########################################################################
+
+insert_note () {
+   if [ -z "$2" ]; then #Se non ricevo nota da riga di comando
+  	display --to SCREEN --result KO  --color RED --screen-indent 4 "Hai inserito la nota nel formato sbagliato" $NC
+	tput sgr0
+	echo 'Esempio : neenosinstall -in "Aggiornato PHP"'
+	exit 0
+   fi
+   #Inserimento nota su server
+   curl -i -s \
+   -H "Accept: application/json" \
+   -H "Content-Type:application/json" \
+   -X POST --data '{"logged_user":"'"$(whoami)"'","authcode":"1371863576699286","note":"'"${*:2}"'","hostname":"'"$(hostname -f)"'"}' $neendonoteURL | grep "200 OK" > /dev/null  
+   #DEBUG echo INSERISCO NOTA SU NEENDO : ${*:2} 
+   display --to SCREEN --result OK  --color GREEN --screen-indent 4 "nota inserita correttamente in neen.do" $NC
+
+   #SLACKTEE INTEGRATION   
+   #Creazione #channel
+   curl -s -d "payload=$json" "https://slack.com/api/channels.create?token=xoxp-4584823652-17592358322-17590188803-dfafe811fd&name=`hostname -s`" > /dev/null
+   #Inserimento nota:
+   echo ${*:2} | /neen/tools/slacktee.sh -c `hostname -s` > /dev/null
+
+   display --to SCREEN --result OK  --color GREEN --screen-indent 4 "nota inserita correttamente in slack" $NC
+
+return
+}
+
+
+retrive_note() {
+	if [ -z "$2" ]; then #Se non ricevo nota da riga di comando
+		curl -s \
+		-H "Accept: application/json" \
+		-X POST --data '{"authcode":"1371863576699286","hostname":"'"$(hostname -f)"'","txt":"1"}' $neendonote_retr_URL | awk 'NR>=3 { print }' 
+	else
+		curl -s \
+                -H "Accept: application/json" \
+                -X POST --data '{"authcode":"1371863576699286","hostname":"'"$(hostname -f)"'","txt":"1","num":"'"$2"'"}' $neendonote_retr_URL | awk 'NR>=3 { print }'
+	fi
+return
+}
+
+check_root() {
+	#Controllo se viene lanciato con i permessi di root
+	NOSTMPVAR=`${ID_CMD} -u 2>/dev/null`
+	if [ "${NOSTMPVAR}" != "0" -a "${NOSTMPCAR}" != "root" ]; then
+		echo "Need root privileges" $NC 
+		exit 1
+	fi
+return
+}
+
+print_result() {
+		reset
+		display --to SCREEN --result OK --color GREEN "Installazione completata con successo"
+                neenlogo
+                display --to SCREEN ""
+                display --to LOG "Sistema installato : $(date) con $(neenosinstall -v)"
+                display --to LOG "-------------------------"
+                display --to SCREEN+LOG --color RED "neen control panel :"
+                tput sgr0
+                display --to SCREEN+LOG "https://$(hostname -f)/neen_cp"
+                display --to SCREEN+LOG "-------------------------"
+                display --to SCREEN+LOG "Username: neen_cp"
+                display --to SCREEN+LOG "Password: $PWD_NEENCP"
+                display --to SCREEN+LOG "--------------------------"
+		display --to SCREEN+LOG "MYSQL :"
+                display --to SCREEN+LOG "Username: root"
+                display --to SCREEN+LOG "Password: $PWD_MYSQL"
+return
+}
+
+install_contasessioni() {
+	display --to SCREEN --result OK  --color GREEN --screen-indent 4 "installing contasessioni" $NC
+	ansible-playbook -i /neen/ansible/hosts/localhost /neen/ansible/contasessioni.yml || exit 1
+return
+
+}
+
+## START !!! ########################################################################################################
+
+#Se nessun input Help
+if [ $# -eq 0 ]; then
+        help
+        exit 0
+fi
+
+#Controllo INPUT
+while [ $# -ge 1 ]; do
+case $1 in
+   -i | --init)
+	check_root
+	init
+	exit 0
+	;;
+   -h | --help)
+        help
+        exit 0
+        ;;
+  -in | --insertnote)
+	insert_note $*
+	exit 0
+	;;
+  -rn | --retrivenote)
+        retrive_note $*
+	exit 0
+	;;
+  -ii | --insertinfnote)
+        vim /etc/profile.d/Z99-communications.sh
+        exit 0
+        ;;
+   -a | --apache)
+	check_root
+	apache
+	mysql
+	neenpanel
+	print_result
+	exit 0	
+	;;
+   -vm | --virtualmin)
+	check_root
+	apache
+	neenpanel
+	mysql
+	virtualmininstall
+	print_result
+	exit 0
+	;; 
+    -cl | --cloudlinux)
+	check_root
+	mysql
+	cloudlinux
+	#neenpanel
+	print_result
+	exit 0
+	;;
+   -n | --nginx)
+	check_root
+	nginx
+	mysql
+	neenpanel
+	print_result
+	exit 0	
+	;;
+   -w | --webserver)
+	check_root
+	neencreasito
+	exit 0
+	;;
+   -v | --version)
+	echo "neenOsInstall v.$NEEN_VERSION"
+	exit 0
+	;;
+  -sp | --showpassword)
+	check_root
+	showpassword
+	exit 0
+	;;
+  -ph | --perfomancehelper)
+	check_root
+	perfomancehelper
+	exit 0
+	;;
+  -cs | --contasessioni)
+        check_root
+        install_contasessioni
+        exit 0
+        ;;
+    *)
+        echo "ERROR, no argument found, run help"
+	exit 1
+        ;;
+esac
+shift
+done
